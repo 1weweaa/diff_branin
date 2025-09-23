@@ -56,7 +56,7 @@ class SimpleFunction:
     def output(self, x):
         # x: shape (n, 2)
         # return (x[:,0] + 2*x[:,1] - 10).reshape(-1,1)
-        return (-x[:,0] - 2*x[:,1] + 10).reshape(-1,1)
+        return (-x[:,0] - 2*x[:,1] + 25).reshape(-1,1)
 
 
 class SimpleDataset:
@@ -152,7 +152,7 @@ class my_Branin:
         data = pickle.load(open(path, "rb"))
         self.x = data[0].astype(np.float32)
         self.y = data[1].astype(np.float32)
-
+        # print(self.y)
         self.obj_func1 = BraninFunction()
         self.obj_func2 = SimpleFunction()
         
@@ -172,10 +172,13 @@ class my_Branin:
         self.mean_y = self.y.mean(axis=0)
         self.std_y = self.y.std(axis=0)
 
-        self.is_x_normalized = False
-        self.is_y_normalized = False
+        self.is_x_normalized = True
+        self.is_y_normalized = True
 
         self.is_discrete = False
+        # print(self.mean_y)
+        # print(self.std_y)
+        # print(self.y)
 
 
 
@@ -204,6 +207,9 @@ class my_Branin:
 
     def denormalize_y(self, y):
         return y * self.std_y + self.mean_y
+
+    def denormalize_x(self, x):
+        return x * self.std_x + self.mean_x
 
 class RvSDataset(Dataset):
 
@@ -1257,36 +1263,39 @@ def run_evaluate_test(
                 x1, x2 = final_samples[i]
                 f.write(f"{x1:.6f},{x2:.6f}\n")
             f.write(f"lambda_my_xunhuan:{lambda_my_xunhuan}\n")
-        # for qqq in xs:
+        for qqq in xs:
 
-        #     if not qqq.isnan().any():
-        #         designs.append(qqq.cpu().numpy())
-        #         if not task.is_discrete:
-        #             ys = task.predict(qqq.cpu().numpy())
-        #         else:
-        #             qqq = qqq.view(qqq.size(0), -1, task.x.shape[-1])
-        #             ys = task.predict(qqq.cpu().numpy())
+            if not qqq.isnan().any():
+                designs.append(qqq.cpu().numpy())
+                if not task.is_discrete:
+                    ys = task.predict(qqq.cpu().numpy())
+                else:
+                    qqq = qqq.view(qqq.size(0), -1, task.x.shape[-1])
+                    ys = task.predict(qqq.cpu().numpy())
                 
 
-        #         min_idx= ys.argmin()                 # 展平索引 
-        #         min_coord = qqq.cpu().numpy()[min_idx]
-        #         print("GT min ys: {}".format(ys.min()))
-        #         print("GT min coord: {}".format(min_coord))
-        #         if normalise_y:
-        #             print("normalise")
-        #             ys = task.denormalize_y(ys)
-        #             print(ys.min())
-        #         else:
-        #             print("none  normalise")
-        #             print(ys.min())
-        #         results.append(ys)
+                min_idx= ys.argmin()                 # 展平索引 
+                min_coord = qqq.cpu().numpy()[min_idx]
+                if normalise_x:
+                    min_coord = task.denormalize_x(min_coord)
+                print("GT min ys: {}".format(ys.min()))
+                print("GT min coord: {}".format(min_coord))
 
-        #         if global_min_val is None or ys.min() < global_min_val:
-        #             global_min_val = ys.min()
-        #             global_min_coord = min_coord    
+                if normalise_y:
+                    print("normalise")
+                    # ys = task.denormalize_y(ys)
+                    print(ys.min())
+                else:
+                    print("none  normalise")
+                    print(ys.min())
+                results.append(ys)
 
-        #     else:
-        #         print("fuck")
+                if global_min_val is None or ys.min() < global_min_val:
+                    global_min_val = ys.min()
+                    global_min_coord = min_coord    
+
+            else:
+                print("fuck")
 
     designs = np.concatenate(designs, axis=0)
     results = np.concatenate(results, axis=0)
@@ -1613,6 +1622,8 @@ if __name__ == "__main__":
             pprint(f"lambda_my_new: {lambda_my_xunhuan}")
             pprint(f"lambda_my_old: {lambda_my_old}")
             pprint(f"alpha: {alpha}")
+            if abs(SimpleFunction().output(min_coord.reshape(1,-1))) < 1e-6 and SimpleFunction().output(min_coord.reshape(1,-1)) < 0:
+                break
         pprint("while_end")
         pprint(f"min_coord: {min_coord}")
     else:
