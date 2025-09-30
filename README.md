@@ -1,0 +1,2 @@
+主要使用train1.py进行运行
+branin_sampler_random.py存储的是在branin代码里面随机采样的代码
