@@ -17,21 +17,36 @@ from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from bayeso_benchmarks.two_dim_branin import Branin as BraninFunction
 
 import matplotlib.pyplot as plt
+
 import wandb
 from forward import ForwardModel
 wandb.finish() 
 os.environ["HTTP_PROXY"] = 'http://127.0.0.1:7890'
 os.environ["HTTPS_PROXY"] = 'http://127.0.0.1:7890'
-# wandb.init(settings=wandb.Settings(init_timeout=120))
-# @contextmanager
-# def suppress_output():
-#     """
-#         A context manager that redirects stdout and stderr to devnull
-#         https://stackoverflow.com/a/52442331
-#     """
-#     with open(os.devnull, 'w') as fnull:
-#         with redirect_stderr(fnull) as err, redirect_stdout(fnull) as out:
-#             yield (err, out)
+
+@contextmanager
+def suppress_output():
+    """
+        A context manager that redirects stdout and stderr to devnull
+        https://stackoverflow.com/a/52442331
+    """
+    with open(os.devnull, 'w') as fnull:
+        with redirect_stderr(fnull) as err, redirect_stdout(fnull) as out:
+            yield (err, out)
+
+
+# with suppress_output():
+#     import design_bench
+
+#     from design_bench.datasets.discrete.tf_bind_8_dataset import TFBind8Dataset
+#     from design_bench.datasets.discrete.tf_bind_10_dataset import TFBind10Dataset
+#     from design_bench.datasets.discrete.cifar_nas_dataset import CIFARNASDataset
+#     from design_bench.datasets.discrete.chembl_dataset import ChEMBLDataset
+
+#     from design_bench.datasets.continuous.ant_morphology_dataset import AntMorphologyDataset
+#     from design_bench.datasets.continuous.dkitty_morphology_dataset import DKittyMorphologyDataset
+#     from design_bench.datasets.continuous.superconductor_dataset import SuperconductorDataset
+    # from design_bench.datasets.continuous.hopper_controller_dataset import HopperControllerDataset
 
 import numpy as np
 import pandas as pd
@@ -48,68 +63,17 @@ args_filename = "args.json"
 checkpoint_dir = "checkpoints"
 wandb_project = "sde-flow"
 
-class SimpleFunction:
-    def __init__(self):
-        # 定义域，可以自己调整,自己调整为和Branin函数定义域一致
-        self.bounds = np.array([[-5, 10], [0, 15]])
-
-    def output(self, x):
-        # x: shape (n, 2)
-        # return (x[:,0] + 2*x[:,1] - 10).reshape(-1,1)
-        return (-x[:,0] - 2*x[:,1] + 25).reshape(-1,1)
-
-
-class SimpleDataset:
-    def __init__(self, path=None):
-        if path is not None:
-            data = pickle.load(open(path, "rb"))
-            self.x = data[0].astype(np.float32)
-            self.y = data[1].astype(np.float32)
-        else:
-            # 没有数据集就随机采样
-            self.x = np.random.uniform(-10, 10, (5000, 2)).astype(np.float32)
-            self.y = SimpleFunction().output(self.x).astype(np.float32)
-
-        self.mean_x = self.x.mean(axis=0)
-        self.std_x = self.x.std(axis=0)
-
-        self.mean_y = self.y.mean(axis=0)
-        self.std_y = self.y.std(axis=0)
-
-        self.is_x_normalized = False
-        self.is_y_normalized = False
-
-        self.is_discrete = False
-        self.obj_func = SimpleFunction()
-
-    def map_normalize_x(self):
-        self.x = (self.x - self.mean_x) / self.std_x
-        self.is_x_normalized = True
-
-    def map_normalize_y(self):
-        self.y = (self.y - self.mean_y) / self.std_y
-        self.is_y_normalized = True
-
-    def predict(self, x):
-        if self.is_x_normalized:
-            x = x * self.std_x + self.mean_x
-
-        # 裁剪到定义域
-        x[:, 0] = np.clip(x[:, 0], self.obj_func.bounds[0, 0], self.obj_func.bounds[0, 1])
-        x[:, 1] = np.clip(x[:, 1], self.obj_func.bounds[1, 0], self.obj_func.bounds[1, 1])
-
-        return self.obj_func.output(x)
-
-    def denormalize_y(self, y):
-        return y * self.std_y + self.mean_y
-
 class Branin:
-    
+
     def __init__(self, path="design_baselines/diff_branin/dataset/branin_gaussian_5k.p"):
-    # def __init__(self, path="design_baselines/diff_branin/dataset/branin_gaussian_multi_region_5k.p"):
         data = pickle.load(open(path, "rb"))
         self.x = data[0].astype(np.float32)
-        self.y = data[1].astype(np.float32)
+        self.y = -data[1].astype(np.float32)
+
+        # # 🔹 丢弃掉 x1 + x2 - 10 < 0 的点
+        # mask = (self.x[:, 0] + self.x[:, 1] - 10 >= 0)
+        # self.x = self.x[mask]
+        # self.y = self.y[mask]
 
         self.mean_x = self.x.mean(axis=0)
         self.std_x = self.x.std(axis=0)
@@ -140,70 +104,7 @@ class Branin:
         x[:, 0] = np.clip(x[:, 0], self.obj_func.bounds[0, 0], self.obj_func.bounds[0, 1])
         x[:, 1] = np.clip(x[:, 1], self.obj_func.bounds[1, 0], self.obj_func.bounds[1, 1])
 
-        return self.obj_func.output(x)
-
-    def denormalize_y(self, y):
-        return y * self.std_y + self.mean_y
-
-class my_Branin:
-    
-    def __init__(self, path="design_baselines/diff_branin/dataset/branin_gaussian_5k.p",lambda_my_xunhuan=1):
-    # def __init__(self, path="design_baselines/diff_branin/dataset/branin_gaussian_multi_region_5k.p",lambda_my_xunhuan=1):
-        data = pickle.load(open(path, "rb"))
-        self.x = data[0].astype(np.float32)
-        self.y = data[1].astype(np.float32)
-        # print(self.y)
-        self.obj_func1 = BraninFunction()
-        self.obj_func2 = SimpleFunction()
-        
-        self.lambda_my_xunhuan = lambda_my_xunhuan
-        # -------------------------
-        # 在这里更新 y 值
-        # -------------------------
-        y1 = self.obj_func1.output(self.x)   # Branin 函数值
-        y2 = self.obj_func2.output(self.x)   # SimpleFunction 函数值
-        self.y = y1 + self.lambda_my_xunhuan * y2
-        # 如果需要保持 shape 一致，可以 reshape
-        self.y = np.array(self.y).astype(np.float32).reshape(-1, 1)
-
-        self.mean_x = self.x.mean(axis=0)
-        self.std_x = self.x.std(axis=0)
-
-        self.mean_y = self.y.mean(axis=0)
-        self.std_y = self.y.std(axis=0)
-
-        self.is_x_normalized = True
-        self.is_y_normalized = True
-
-        self.is_discrete = False
-        # print(self.mean_y)
-        # print(self.std_y)
-        # print(self.y)
-
-
-
-    def map_normalize_x(self):
-        self.x = (self.x - self.mean_x) / self.std_x
-        self.is_x_normalized = True
-
-    def map_normalize_y(self):
-        self.y = (self.y - self.mean_y) / self.std_y
-        self.is_y_normalized = True
-
-    def predict(self, x):
-
-        if self.is_x_normalized:
-            x = x * self.std_x + self.mean_x
-
-        x[:, 0] = np.clip(x[:, 0], self.obj_func1.bounds[0, 0], self.obj_func1.bounds[0, 1])
-        x[:, 1] = np.clip(x[:, 1], self.obj_func1.bounds[1, 0], self.obj_func1.bounds[1, 1])
-
-        y1 = self.obj_func1.output(x)          # shape (batch_size,) 或 (batch_size,1)
-        y2 = self.obj_func2.output(x)          # shape (batch_size,)
-        # y1 = np.array(y1).reshape(-1, 1)
-        # y2 = np.array(y2).reshape(-1, 1)
-
-        return y1 + self.lambda_my_xunhuan * y2    # shape (batch_size,)
+        return -self.obj_func.output(x)
 
     def denormalize_y(self, y):
         return y * self.std_y + self.mean_y
@@ -266,14 +167,14 @@ def split_dataset(task, val_frac=None, device=None):
     y = y.reshape(-1, 1)
     print("shapesss", x.shape, y.shape)
 
-    # w = get_weights(y, base_temp=0.03 * length)
-    w = get_weights(y, base_temp=0.1)
+    w = get_weights(y, base_temp=0.03 * length)
+    # w = get_weights(y, base_temp=0.1)
     # w = None
 
     # TODO: Modify
     # full_ds = DKittyMorphologyDataset()
     # y = (y - full_ds.y.min()) / (full_ds.y.max() - full_ds.y.min())
-    
+
     # print(w)
     # print(w.shape)
 
@@ -328,14 +229,12 @@ class RvSDataModule(pl.LightningDataModule):
     def train_dataloader(self):
         train_loader = DataLoader(self.train_dataset,
                                   num_workers=self.num_workers,
-                                    # num_workers=0,
                                   batch_size=self.batch_size)
         return train_loader
 
     def val_dataloader(self):
         val_loader = DataLoader(self.val_dataset,
                                 num_workers=self.num_workers,
-                                # num_workers=0,
                                 batch_size=self.batch_size)
         return val_loader
 
@@ -346,35 +245,13 @@ def log_args(
 ) -> None:
     """Log arguments to a file in the wandb directory."""
     wandb_logger.log_hyperparams(args)
-    args.wandb_entity ='ydy'
-    # args.wandb_entity = wandb_logger.experiment.entity
+
+    args.wandb_entity = wandb_logger.experiment.entity
     args.wandb_project = wandb_logger.experiment.project
     args.wandb_run_id = wandb_logger.experiment.id
     args.wandb_path = wandb_logger.experiment.path
 
     out_directory = wandb_logger.experiment.dir
-    pprint(f"out_directory: {out_directory}")
-    args_file = os.path.join(out_directory, args_filename)
-    with open(args_file, "w") as f:
-        try:
-            json.dump(args.__dict__, f)
-        except AttributeError:
-            json.dump(args, f)
-
-def log_args1(
-    args: configargparse.Namespace,
-    wandb_logger: pl.loggers.wandb.WandbLogger,
-) -> None:
-    """Log arguments to a file in the wandb directory."""
-    wandb_logger.log_hyperparams(args)
-    args.wandb_entity ='ydy'
-    # args.wandb_entity = wandb_logger.experiment.entity
-    args.wandb_project = wandb_logger.experiment.project
-    args.wandb_run_id = wandb_logger.experiment.id
-    args.wandb_path = wandb_logger.experiment.path
-
-    # out_directory = wandb_logger.experiment.dir
-    out_directory = "./test"
     pprint(f"out_directory: {out_directory}")
     args_file = os.path.join(out_directory, args_filename)
     with open(args_file, "w") as f:
@@ -445,7 +322,6 @@ def run_training_forward(
     monitor = "val_loss" if val_frac > 0 else "train_loss"
     checkpoint_dirpath = os.path.join(wandb_logger.experiment.dir,
                                       checkpoint_dir)
-    pprint(f"Checkpoints will be saved to: {checkpoint_dirpath}", flush=True) 
     checkpoint_filename = f"{taskname}_{seed}-" + "-{epoch:03d}-{" + f"{monitor}" + ":.4e}"
     periodic_checkpoint_callback = pl.callbacks.ModelCheckpoint(
         dirpath=checkpoint_dirpath,
@@ -465,15 +341,13 @@ def run_training_forward(
         save_top_k=1,  # save top model based on monitored loss
     )
     trainer = pl.Trainer(
-        # gpus=int(use_gpu),
-        accelerator='gpu', devices=1,
+        gpus=int(use_gpu),
         auto_lr_find=auto_tune_lr,
         max_epochs=epochs,
-        # max_steps=max_steps,
-        max_steps=20000,
+        max_steps=max_steps,
         max_time=train_time,
         logger=wandb_logger,
-        # progress_bar_refresh_rate=20,
+        progress_bar_refresh_rate=20,
         callbacks=[periodic_checkpoint_callback, val_checkpoint_callback],
         track_grad_norm=2,  # logs the 2-norm of gradients
         limit_val_batches=1.0 if val_frac > 0 else 0,
@@ -496,115 +370,6 @@ def run_training_forward(
                                 num_workers=num_workers,)
     trainer.fit(model, data_module)
 
-def run_training_forward_test(
-    taskname: str,
-    seed: int,
-    wandb_logger: pl.loggers.wandb.WandbLogger,
-    args,
-    device=None,
-    lambda_my_xunhuan=None,
-):
-    epochs = args.epochs
-    max_steps = args.max_steps
-    train_time = args.train_time
-    hidden_size = args.hidden_size
-    depth = args.depth
-    learning_rate = args.learning_rate
-    auto_tune_lr = args.auto_tune_lr
-    dropout_p = args.dropout_p
-    checkpoint_every_n_epochs = args.checkpoint_every_n_epochs
-    checkpoint_every_n_steps = args.checkpoint_every_n_steps
-    checkpoint_time_interval = args.checkpoint_time_interval
-    batch_size = args.batch_size
-    val_frac = args.val_frac
-    use_gpu = args.use_gpu
-    device = device
-    num_workers = args.num_workers
-    vtype = args.vtype
-    T0 = args.T0
-    normalise_x = args.normalise_x
-    normalise_y = args.normalise_y
-    debias = args.debias
-    score_matching = args.score_matching
-
-    set_seed(seed)
-    if taskname == "branin":
-        task = Branin(path=args.path)
-    elif taskname == "my_branin":
-        pprint(lambda_my_xunhuan)
-        task = my_Branin(path=args.path, lambda_my_xunhuan=lambda_my_xunhuan)
-    # elif taskname != 'tf-bind-10':
-    #     task = design_bench.make(TASKNAME2TASK[taskname])
-    # else:
-    #     task = design_bench.make(TASKNAME2TASK[taskname],
-    #                              dataset_kwargs={"max_samples": 10000})
-
-    if normalise_x:
-        task.map_normalize_x()
-    if normalise_y:
-        task.map_normalize_y()
-
-    if task.is_discrete:
-        task.map_to_logits()
-    print("task-y", task.y.min(), task.y.max())
-    model = ForwardModel(taskname=taskname,
-                          task=task,
-                          learning_rate=learning_rate,
-                          hidden_size=hidden_size,
-                          vtype=vtype,
-                          beta_min=args.beta_min,
-                          beta_max=args.beta_max,
-                          simple_clip=args.simple_clip,
-                          T0=T0,
-                          debias=debias,
-                          dropout_p=dropout_p)
-
-    monitor = "val_loss" if val_frac > 0 else "train_loss"
-    my_dir = "./test"
-    checkpoint_dirpath = os.path.join(my_dir,
-                                      checkpoint_dir)
-    checkpoint_filename = f"{taskname}_{seed}-" + "-{epoch:03d}-{" + f"{monitor}" + ":.4e}"
-    periodic_checkpoint_callback = pl.callbacks.ModelCheckpoint(
-        dirpath=checkpoint_dirpath,
-        filename=checkpoint_filename,
-        save_last=False,
-        save_top_k=-1,
-        every_n_epochs=checkpoint_every_n_epochs,
-        every_n_train_steps=checkpoint_every_n_steps,
-        train_time_interval=pd.Timedelta(checkpoint_time_interval).
-        to_pytimedelta() if checkpoint_time_interval is not None else None,
-    )
-    val_checkpoint_callback = pl.callbacks.ModelCheckpoint(
-        dirpath=checkpoint_dirpath,
-        monitor=monitor,
-        filename=checkpoint_filename,
-        save_last=True,  # save latest model
-        save_top_k=1,  # save top model based on monitored loss
-    )
-    trainer = pl.Trainer(
-        # gpus=int(use_gpu),
-        accelerator='gpu', devices=1,
-        auto_lr_find=auto_tune_lr,
-        max_epochs=epochs,
-        # max_steps=max_steps,
-        max_steps=20000,
-        max_time=train_time,
-        logger=wandb_logger,
-        # progress_bar_refresh_rate=20,
-        callbacks=[periodic_checkpoint_callback, val_checkpoint_callback],
-        track_grad_norm=2,  # logs the 2-norm of gradients
-        limit_val_batches=1.0 if val_frac > 0 else 0,
-        limit_test_batches=0,
-    )
-
-    data_module = RvSDataModule(task=task,
-                                val_frac=val_frac,
-                                device=device,
-                                batch_size=batch_size,
-                                normalise_x=normalise_x,
-                                normalise_y=normalise_y,
-                                num_workers=num_workers,)
-    trainer.fit(model, data_module)
 
 
 def run_training(
@@ -654,7 +419,6 @@ def run_training(
         task.map_to_logits()
 
     if not score_matching:
-        print("Using diffusion test")
         model = DiffusionTest(taskname=taskname,
                               task=task,
                               learning_rate=learning_rate,
@@ -682,9 +446,11 @@ def run_training(
 
     # monitor = "val_loss" if val_frac > 0 else "train_loss"
     monitor = "elbo_estimator" if val_frac > 0 else "train_loss"
-    checkpoint_dirpath = os.path.join(wandb_logger.experiment.dir,
+    expt_save_path = f"./experiments/{args.task}/{args.name}/{args.seed}"
+    checkpoint_dirpath = os.path.join(expt_save_path,
                                       checkpoint_dir)
-    print(f"Checkpoints will be saved to: {checkpoint_dirpath}") 
+    # checkpoint_dirpath = os.path.join(wandb_logger.experiment.dir,
+    #                                   checkpoint_dir)
     checkpoint_filename = f"{taskname}_{seed}-" + "-{epoch:03d}-{" + f"{monitor}" + ":.4e}"
     periodic_checkpoint_callback = pl.callbacks.ModelCheckpoint(
         dirpath=checkpoint_dirpath,
@@ -704,13 +470,10 @@ def run_training(
         save_top_k=1,  # save top model based on monitored loss
     )
     trainer = pl.Trainer(
-        # gpus=int(use_gpu),
-        accelerator='gpu', devices=1,
+        gpus=int(use_gpu),
         auto_lr_find=auto_tune_lr,
         max_epochs=epochs,
         # max_steps=max_steps,
-        # max_steps=max_steps,
-        max_steps=-1,
         max_time=train_time,
         logger=wandb_logger,
         # progress_bar_refresh_rate=20,
@@ -731,7 +494,8 @@ def run_training(
                                 val_frac=val_frac,
                                 device=device,
                                 batch_size=batch_size,
-                                num_workers=num_workers,
+                                # num_workers=num_workers,
+                                num_workers=0,
                                 normalise_x=normalise_x,
                                 normalise_y=normalise_y)
     trainer.fit(model, data_module)
@@ -755,7 +519,7 @@ def run_evaluate(
         task = Branin(args.path)
     # else:
     #     task = design_bench.make(TASKNAME2TASK[taskname])
-
+    print(task.mean_y, task.std_y)
     if normalise_x:
         task.map_normalize_x()
     if normalise_y:
@@ -764,74 +528,34 @@ def run_evaluate(
     if task.is_discrete:
         task.map_to_logits()
 
-    # if not args.score_matching:
-    #     print("Using diffusion test")
-    #     model = DiffusionTest.load_from_checkpoint(
-    #         checkpoint_path=checkpoint_path,
-    #         taskname=taskname,
-    #         task=task,
-    #         learning_rate=args.learning_rate,
-    #         hidden_size=args.hidden_size,
-    #         vtype=args.vtype,
-    #         beta_min=args.beta_min,
-    #         beta_max=args.beta_max,
-    #         T0=args.T0,
-    #         dropout_p=args.dropout_p)
-    # else:
-    #     print("Score matching loss")
-    #     model = DiffusionScore.load_from_checkpoint(
-    #         checkpoint_path=checkpoint_path,
-    #         taskname=taskname,
-    #         task=task,
-    #         learning_rate=args.learning_rate,
-    #         hidden_size=args.hidden_size,
-    #         vtype=args.vtype,
-    #         beta_min=args.beta_min,
-    #         beta_max=args.beta_max,
-    #         T0=args.T0,
-    #         dropout_p=args.dropout_p)
-# -----------------------------
-    # ✅ 关键修改：先加载 ForwardModel
-    # -----------------------------
-    forward_model = ForwardModel.load_from_checkpoint(
-        checkpoint_path=checkpoint_path,
-        taskname=taskname,
-        task=task,
-        hidden_size=args.hidden_size,
-        learning_rate=args.learning_rate,
-        vtype=args.vtype,
-        beta_min=args.beta_min,
-        beta_max=args.beta_max,
-        simple_clip=args.simple_clip,
-        T0=args.T0,
-        debias=args.debias,
-        dropout_p=args.dropout_p,
-    )
-    forward_model = forward_model.to(device)
-    forward_model.eval()
+    if not args.score_matching:
+        model = DiffusionTest.load_from_checkpoint(
+            checkpoint_path=checkpoint_path,
+            taskname=taskname,
+            task=task,
+            learning_rate=args.learning_rate,
+            hidden_size=args.hidden_size,
+            vtype=args.vtype,
+            beta_min=args.beta_min,
+            beta_max=args.beta_max,
+            T0=args.T0,
+            dropout_p=args.dropout_p)
+    else:
+        print("Score matching loss")
+        model = DiffusionScore.load_from_checkpoint(
+            checkpoint_path=checkpoint_path,
+            taskname=taskname,
+            task=task,
+            learning_rate=args.learning_rate,
+            hidden_size=args.hidden_size,
+            vtype=args.vtype,
+            beta_min=args.beta_min,
+            beta_max=args.beta_max,
+            T0=args.T0,
+            dropout_p=args.dropout_p)
 
-    # -----------------------------
-    # 初始化 DiffusionTest，传入 ForwardModel
-    # -----------------------------
-    model = DiffusionTest(
-        taskname=taskname,
-        task=task,
-        hidden_size=args.hidden_size,
-        learning_rate=args.learning_rate,
-        vtype=args.vtype,
-        beta_min=args.beta_min,
-        beta_max=args.beta_max,
-        simple_clip=args.simple_clip,
-        T0=args.T0,
-        debias=args.debias,
-        dropout_p=args.dropout_p,
-    )
     model = model.to(device)
     model.eval()
-    # ✅ 替换 mlp
-    model.mlp = forward_model.mlp
-
-    print("✅ ForwardModel 权重已加载到 DiffusionTest")
 
     def euler_maruyama_sampler(sde,
                                x_0,
@@ -843,8 +567,6 @@ def run_evaluate(
         Euler Maruyama method with a step size delta
         """
         # init
-        save_dir="score_plots"
-        os.makedirs(save_dir, exist_ok=True)
         device = sde.gen_sde.T.device
         batch_size = x_0.size(0)
         ndim = x_0.dim() - 1
@@ -878,6 +600,7 @@ def run_evaluate(
                 # print(score)
                 score = score.cpu().numpy()
                 plt.quiver(x_plot_0[0], x_plot_0[1], score[:,0].reshape(num_grid, num_grid), score[:,1].reshape(num_grid, num_grid))
+                os.makedirs("score_plots", exist_ok=True)
                 plt.savefig(f'score_plots/score_{ts[i]}.png')
                 plt.clf()
 
@@ -891,18 +614,15 @@ def run_evaluate(
                     pass
         return xs
 
-    # @torch.no_grad()
-    # def _get_trained_model():
+    @torch.no_grad()
+    def _get_trained_model():
+        checkpoint_path = f"experiments/{taskname}/forward_model/123/wandb/latest-run/files/checkpoints/last.ckpt"
+        model = ForwardModel.load_from_checkpoint(
+            checkpoint_path=checkpoint_path,
+            taskname=taskname,
+            task=task,)
 
-    #     checkpoint_path= 'experiments/branin/branin_1_1/123/wandb/run-20250915_094907-03ihwagb/files/checkpoints/last.ckpt'
-    #     # checkpoint_path = f"experiments/{taskname}/forward_model/123/wandb/latest-run/files/checkpoints/last.ckpt"
-    #     model = ForwardModel.load_from_checkpoint(
-    #         checkpoint_path=checkpoint_path,
-    #         taskname=taskname,
-    #         task=task,)
-
-    #     return model
-
+        return model
 
     num_steps = args.num_steps
     num_samples = 512
@@ -910,6 +630,26 @@ def run_evaluate(
 
     # lmbds = [0., 1.]
     lmbds = [args.lamda]
+
+    # # save to file
+    # expt_save_path = f"./experiments/{args.task}/{args.name}/{args.seed}"
+    # assert os.path.exists(expt_save_path)
+
+    # alias = uuid.uuid4()
+    # run_specific_str = f"{num_samples}_{num_steps}_{args.condition}_{args.gamma}_{args.beta_min}_{args.beta_max}_{alias}"
+    # save_results_dir = os.path.join(
+    #     expt_save_path, f"wandb/latest-run/files/results/{run_specific_str}/")
+    # if not os.path.exists(save_results_dir):
+    #     os.makedirs(save_results_dir)
+
+    # assert os.path.exists(save_results_dir)
+
+    # symlink_dir = os.path.join(expt_save_path,
+    #                            f"wandb/latest-run/files/results/latest-run")
+
+    # if os.path.exists(symlink_dir):
+    #     os.unlink(symlink_dir)
+    # os.symlink(run_specific_str, symlink_dir)
 
     # save to file
     expt_save_path = f"./experiments/{args.task}/{args.name}/{args.seed}"
@@ -942,16 +682,13 @@ def run_evaluate(
         # 非 Windows 系统，仍然使用 symlink
         os.symlink(run_specific_str, symlink_dir)
 
-    # if os.path.exists(symlink_dir):
-    #     os.unlink(symlink_dir)
-    # os.symlink(run_specific_str, symlink_dir)
 
     # sample and plot
     designs = []
     results = []
-
     for lmbd in lmbds:
-      
+        print("x_mean", task.mean_x)
+        print("x_std", task.std_x)
         if not task.is_discrete:
             x_0 = torch.randn(num_samples, task.x.shape[-1],
                               device=device)  # init from prior
@@ -959,7 +696,8 @@ def run_evaluate(
             x_0 = torch.randn(num_samples, task.x.shape[-1] * task.x.shape[-2],
                               device=device)  # init from prior
 
-        y_ = torch.ones(num_samples).to(device) * args.condition
+        y_ = torch.ones(num_samples).to(device) * float(args.condition)
+        print(task.denormalize_y(args.condition))
         xs = euler_maruyama_sampler(model,
                                     x_0,
                                     y_,
@@ -967,35 +705,59 @@ def run_evaluate(
                                     lmbd=lmbd,
                                     keep_all_samples=False)  # sample
                                     # keep_all_samples=True)  # sample
-        # pred_model = _get_trained_model()
-        preds = []
+        final_samples = xs[0].cpu().numpy()  # 形状为 (batch_size, 2)
 
+        # 保存为 TXT 文件，只包含 Branin 函数的候选解
+        with open('branin_solutions.txt', 'w') as f:
+            # 写入表头
+            f.write("x1,x2,y\n")
+            
+            # 写入每个样本点
+            for i in range(final_samples.shape[0]):
+                if task.is_x_normalized:
+                    x1, x2 = task.denormalize_x(final_samples[i])
+                    if x1<-5:x1=-5
+                    if x1>10:x1=10
+                    if x2<0:x2=0
+                    if x2>15:x2=15
+                else:
+                    x1, x2 = final_samples[i]
+                    if x1<-5:x1=-5
+                    if x1>10:x1=10
+                    if x2<0:x2=0
+                    if x2>15:x2=15
+                    if x1+x2-10<0:
+                        continue
+                # y = task.obj_func.output(np.array([[x1, x2]]))
+                # f.write(f"{x1:.6f},{x2:.6f},{y:.6f}\n")
+                f.write(f"{x1:.6f},{x2:.6f}\n")
+        # pred_model = _get_trained_model()
+        # preds = []
         for qqq in xs:
-            # print(qqq.shape)
-            # print(qqq.isnan().any())
+            print(qqq.shape)
+            qqq = torch.nan_to_num(qqq, nan=100)
+            mask = (qqq[:,0] + qqq[:,1] - 10) >= 0
+            qqq = qqq[mask]
             if not qqq.isnan().any():
                 designs.append(qqq.cpu().numpy())
                 if not task.is_discrete:
-                    ys = -task.predict(qqq.cpu().numpy())
+                    ys = task.predict(qqq.cpu().numpy())
                 else:
                     qqq = qqq.view(qqq.size(0), -1, task.x.shape[-1])
-                    ys = -task.predict(qqq.cpu().numpy())
+                    ys = task.predict(qqq.cpu().numpy())
 
-                # pred_ys = -pred_model.mlp(qqq)
+                # pred_ys = pred_model.mlp(qqq)
                 # preds.append(pred_ys.cpu().numpy())
 
-                # print("GT ys: {}".format(ys.max()))
+                print("GT ys: {}".format(ys.max()))
                 # print("Pred ys: {}".format(pred_ys.max()))
-                print("GT ys: {}".format(ys.min()))
-                # print("Pred ys: {}".format(pred_ys.min()))
-
                 if normalise_y:
                     print("normalise")
-                    ys = task.denormalize_y(ys)
-                    print(ys.min())
+                    # ys = task.denormalize_y(ys)
+                    print(ys.max())
                 else:
                     print("none")
-                    print(ys.min())
+                    print(ys.max())
                 results.append(ys)
             else:
                 print("fuck")
@@ -1005,6 +767,7 @@ def run_evaluate(
 
     print(designs.shape)
     print(results.shape)
+
     with open(os.path.join(save_results_dir, 'designs.pkl'), 'wb') as f:
         pkl.dump(designs, f)
 
@@ -1012,312 +775,73 @@ def run_evaluate(
         pkl.dump(results, f)
 
     shutil.copy(args.configs, save_results_dir)
+ 
+def plt_mysampler(expt_save_path, seed):
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import os
 
-@torch.no_grad()
-def run_evaluate_test(
-    taskname,
-    seed,
-    hidden_size,
-    learning_rate,
-    checkpoint_path,
-    args,
-    wandb_logger=None,
-    device=None,
-    normalise_x=False,
-    normalise_y=False,
-    lambda_my_xunhuan=0.0,
-):
-    set_seed(seed)
-    if taskname == "branin":
-        task = Branin(args.path)
-    elif taskname == "my_branin":
-        pprint(lambda_my_xunhuan)
-        task = my_Branin(path=args.path, lambda_my_xunhuan=lambda_my_xunhuan)
-    # else:
-    #     task = design_bench.make(TASKNAME2TASK[taskname])
+    # Branin 函数定义
+    def branin(x1, x2):
+        a = 1.0
+        b = 5.1 / (4 * np.pi**2)
+        c = 5 / np.pi
+        r = 6
+        s = 10
+        t = 1 / (8 * np.pi)
+        return a * (x2 - b * x1**2 + c * x1 - r)**2 + s * (1 - t) * np.cos(x1) + s
+    os.makedirs(expt_save_path, exist_ok=True)  # 如果目录不存在就创建
+    # 读取txt文件
+    input_file = "branin_solutions.txt"   # 替换成你的txt文件名
+    output_file = os.path.join(expt_save_path, "branin_solutions_with_y.txt")
+    data = np.loadtxt(input_file, delimiter=",", skiprows=1)  # 跳过第一行
 
-    if normalise_x:
-        task.map_normalize_x()
-    if normalise_y:
-        task.map_normalize_y()
+    # 丢弃定义域外的点
+    x1_min, x1_max = -5, 10
+    x2_min, x2_max = 0, 15
+    mask = (data[:, 0] >= x1_min) & (data[:, 0] <= x1_max) & \
+        (data[:, 1] >= x2_min) & (data[:, 1] <= x2_max)
+    data = data[mask]
 
-    if task.is_discrete:
-        task.map_to_logits()
-
-    # ✅ 关键修改：先加载 ForwardModel
-    # -----------------------------
-    forward_model = ForwardModel.load_from_checkpoint(
-        checkpoint_path=checkpoint_path,
-        taskname=taskname,
-        task=task,
-        hidden_size=args.hidden_size,
-        learning_rate=args.learning_rate,
-        vtype=args.vtype,
-        beta_min=args.beta_min,
-        beta_max=args.beta_max,
-        simple_clip=args.simple_clip,
-        T0=args.T0,
-        debias=args.debias,
-        dropout_p=args.dropout_p,
-    )
-    forward_model = forward_model.to(device)
-    forward_model.eval()
-
-    # -----------------------------
-    # 初始化 DiffusionTest，传入 ForwardModel
-    # -----------------------------
-    model = DiffusionTest(
-        taskname=taskname,
-        task=task,
-        hidden_size=args.hidden_size,
-        learning_rate=args.learning_rate,
-        vtype=args.vtype,
-        beta_min=args.beta_min,
-        beta_max=args.beta_max,
-        simple_clip=args.simple_clip,
-        T0=args.T0,
-        debias=args.debias,
-        dropout_p=args.dropout_p,
-    )
-    model = model.to(device)
-    model.eval()
-    # ✅ 替换 mlp
-    model.mlp = forward_model.mlp
-
-    print("✅ ForwardModel 权重已加载到 DiffusionTest")
-
-    def euler_maruyama_sampler(sde,
-                               x_0,
-                               ya,
-                               num_steps,
-                               lmbd=0.,
-                               keep_all_samples=True):
-        """
-        Euler Maruyama method with a step size delta
-        """
-        # init
-        save_dir="score_plots"
-        os.makedirs(save_dir, exist_ok=True)
-        device = sde.gen_sde.T.device
-        batch_size = x_0.size(0)
-        ndim = x_0.dim() - 1
-        T_ = sde.gen_sde.T.cpu().item()
-        delta = T_ / num_steps
-        ts = torch.linspace(0, 1, num_steps + 1) * T_
-
-        # sample
-        xs = []
-        x_t = x_0.detach().clone().to(device)
-        t = torch.zeros(batch_size, *([1] * ndim), device=device)
-        num_grid = 5
-        x_plot = np.meshgrid(np.linspace(-5, 10, num_grid), np.linspace(0, 15, num_grid))
-        x_plot_0 = np.meshgrid(np.linspace(-5, 10, num_grid), np.linspace(0, 15, num_grid))
-        x_plot = np.concatenate((x_plot[0].reshape(-1,1), x_plot[1].reshape(-1,1)), axis=1)
-        x_plot = (x_plot - np.asarray([2.5, 7.5]).reshape(1,-1)) / 4.33
-        y_plot = np.zeros((num_grid * num_grid, 1))
-        t2 = torch.zeros((num_grid*num_grid, *([1] * ndim)), device=device)
-
-        x_plot = torch.tensor(x_plot, dtype=torch.float32, device=device)
-        y_plot = torch.tensor(y_plot, dtype=torch.float32, device=device)
-        with torch.no_grad():
-            for i in range(num_steps):
-                t.fill_(ts[i].item())
-                t2.fill_(ts[i].item())
-                mu = sde.gen_sde.mu(t, x_t, ya, lmbd=lmbd, gamma=args.gamma)
-                g = sde.gen_sde.base_sde.g(1-t2, y_plot)
-                a = sde.gen_sde.a(x_plot, 1-t2.squeeze(), y_plot)
-
-                score = a / g
-                # print(score)
-                score = score.cpu().numpy()
-                plt.quiver(x_plot_0[0], x_plot_0[1], score[:,0].reshape(num_grid, num_grid), score[:,1].reshape(num_grid, num_grid))
-                plt.savefig(f'score_plots/score_{ts[i]}.png')
-                plt.clf()
-
-                sigma = sde.gen_sde.sigma(t, x_t, lmbd=lmbd)
-                x_t = x_t + delta * mu + delta**0.5 * sigma * torch.randn_like(
-                    x_t
-                )  # one step update of Euler Maruyama method with a step size delta
-                if keep_all_samples or i == num_steps - 1:
-                    xs.append(x_t.cpu())
-                else:
-                    pass
-        return xs
-
-    # @torch.no_grad()
-    # def _get_trained_model():
-
-    #     checkpoint_path= 'experiments/branin/branin_1_1/123/wandb/run-20250915_094907-03ihwagb/files/checkpoints/last.ckpt'
-    #     # checkpoint_path = f"experiments/{taskname}/forward_model/123/wandb/latest-run/files/checkpoints/last.ckpt"
-    #     model = ForwardModel.load_from_checkpoint(
-    #         checkpoint_path=checkpoint_path,
-    #         taskname=taskname,
-    #         task=task,)
-
-    #     return model
-
-
-
-    num_steps = args.num_steps
-    num_samples = 512
-    # num_samples = 10
-
-    # lmbds = [0., 1.]
-    lmbds = [args.lamda]
-
-    # save to file
-    expt_save_path = f"./test"
-    assert os.path.exists(expt_save_path)
-
-    alias = uuid.uuid4()
-    # run_specific_str = f"data_{num_steps}_"
-    run_specific_str = f"data"
-    save_results_dir = os.path.join(
-        expt_save_path, f"results/{run_specific_str}/")
-    if not os.path.exists(save_results_dir):
-        os.makedirs(save_results_dir)
-
-    assert os.path.exists(save_results_dir)
-
-    symlink_dir = os.path.join(expt_save_path,
-                               f"results/latest-run")
-
-        # 如果存在旧目录，先删除
-    if os.path.exists(symlink_dir):
-        if os.path.islink(symlink_dir):
-            os.unlink(symlink_dir)
-        else:
-            shutil.rmtree(symlink_dir)
-
-    # Windows 下不创建 symlink，改用复制目录
-    if sys.platform.startswith("win"):
-        src_dir = os.path.join(expt_save_path, f"results/{run_specific_str}/")
-        shutil.copytree(src_dir, symlink_dir)
-    else:
-        # 非 Windows 系统，仍然使用 symlink
-        os.symlink(run_specific_str, symlink_dir)
-
-    # if os.path.exists(symlink_dir):
-    #     os.unlink(symlink_dir)
-    # os.symlink(run_specific_str, symlink_dir)
-
-    # sample and plot
-    designs = []
+    # 计算 y
     results = []
-    global_min_val = None
-    global_min_coord = None
+    for x1_val, x2_val in data:
+        y_val = branin(x1_val, x2_val)
+        results.append([x1_val, x2_val, y_val])
 
-    # -------------------------
-    # 4. 加载初始点
-    # -------------------------
-    # init_dataset_path = "design_baselines/diff_branin/dataset/branin_gaussian_5k.p"
-    # init_dataset_path = "design_baselines/diff_branin/dataset/branin_gaussian_multi_region_5k.p"
-    # with open(init_dataset_path, "rb") as f:
-    #     init_X, init_Y = pkl.load(f)
-    #     init_X = init_X.astype(np.float32)
-    #     init_Y = init_Y.astype(np.float32)
-    # # ✅ 用相同的函数计算新的 y
-    # obj_func1 = BraninFunction()
-    # obj_func2 = SimpleFunction()
-    # init_Y_new = obj_func1.output(init_X) + lambda_my_xunhuan * obj_func2.output(init_X)
-    # init_Y_new = np.array(init_Y_new).astype(np.float32).reshape(-1, 1)
+    # 保存结果
+    np.savetxt(output_file, results, fmt="%.6f", delimiter=",", header="x1,x2,y", comments="")
+    print(f"结果已保存到 {output_file}")
 
-    # ✅ 更新全局最小值
-    # global_min_val = init_Y_new.min()
-    # global_min_coord = init_X[init_Y_new.argmin()]
+    # ---------------- 绘制等高线图 ---------------- #
+    # 定义 Branin 函数的常见范围
+    x1_grid = np.linspace(-5, 10, 200)
+    x2_grid = np.linspace(0, 15, 200)
+    X1, X2 = np.meshgrid(x1_grid, x2_grid)
+    Z = branin(X1, X2)
 
-    # print("✅ 初始全局最小值:", global_min_val)
-    # print("✅ 初始最小点坐标:", global_min_coord)
+    plt.figure(figsize=(8, 6))
+    contours = plt.contour(X1, X2, Z, levels=50, cmap="viridis")
+    plt.clabel(contours, inline=True, fontsize=8)
 
+    # 绘制剩余的点（都在定义域内）
+    plt.scatter(data[:, 0], data[:, 1], c="red", s=50, marker="o", label="Input Points")
 
+    plt.title("Branin Function Contour (Points Inside Domain)")
+    plt.xlabel("x1")
+    plt.ylabel("x2")
+    plt.colorbar(contours, label="f(x1, x2)")
+    plt.legend()
+    plt.tight_layout()
 
-    for lmbd in lmbds:
-      
-        if not task.is_discrete:
-            x_0 = torch.randn(num_samples, task.x.shape[-1],
-                              device=device)  # init from prior
-        else:
-            x_0 = torch.randn(num_samples, task.x.shape[-1] * task.x.shape[-2],
-                              device=device)  # init from prior
+    # 保存图片
+    fig_path = os.path.join(expt_save_path, f"branin_contour_{seed}.png")
+    plt.savefig(fig_path, dpi=300)
+    plt.close()
 
-        y_ = torch.ones(num_samples).to(device) * args.condition
-        xs = euler_maruyama_sampler(model,
-                                    x_0,
-                                    y_,
-                                    num_steps,
-                                    lmbd=lmbd,
-                                    keep_all_samples=False)  # sample
-                                    # keep_all_samples=True)  # sample
-        # pred_model = _get_trained_model()
-        preds = []
-        # 获取最后一步的结果
-        final_samples = xs[0].cpu().numpy()  # 形状为 (batch_size, 2)
-
-        # 保存为 TXT 文件，只包含 Branin 函数的候选解
-        with open('branin_solutions.txt', 'w') as f:
-            # 写入表头
-            f.write("x1,x2\n")
-            
-            # 写入每个样本点
-            for i in range(final_samples.shape[0]):
-                x1, x2 = final_samples[i]
-                f.write(f"{x1:.6f},{x2:.6f}\n")
-            f.write(f"lambda_my_xunhuan:{lambda_my_xunhuan}\n")
-        for qqq in xs:
-
-            if not qqq.isnan().any():
-                designs.append(qqq.cpu().numpy())
-                if not task.is_discrete:
-                    ys = task.predict(qqq.cpu().numpy())
-                else:
-                    qqq = qqq.view(qqq.size(0), -1, task.x.shape[-1])
-                    ys = task.predict(qqq.cpu().numpy())
-                
-
-                min_idx= ys.argmin()                 # 展平索引 
-                min_coord = qqq.cpu().numpy()[min_idx]
-                if normalise_x:
-                    min_coord = task.denormalize_x(min_coord)
-                print("GT min ys: {}".format(ys.min()))
-                print("GT min coord: {}".format(min_coord))
-
-                if normalise_y:
-                    print("normalise")
-                    # ys = task.denormalize_y(ys)
-                    print(ys.min())
-                else:
-                    print("none  normalise")
-                    print(ys.min())
-                results.append(ys)
-
-                if global_min_val is None or ys.min() < global_min_val:
-                    global_min_val = ys.min()
-                    global_min_coord = min_coord    
-
-            else:
-                print("fuck")
-
-    designs = np.concatenate(designs, axis=0)
-    results = np.concatenate(results, axis=0)
-    print("designs.shape: {}".format(designs.shape))
-    print("results.shape: {}".format(results.shape))
-    # print("init_X.shape: {}".format(init_X.shape))
-    # print("init_Y_new.shape: {}".format(init_Y_new.shape))
+    print(f"图像已保存到 {fig_path}")
 
 
-    # print(designs.shape)
-    # print(results.shape)
-    with open(os.path.join(save_results_dir, 'designs.pkl'), 'wb') as f:
-        pkl.dump(designs, f)
-
-    with open(os.path.join(save_results_dir, 'results.pkl'), 'wb') as f:
-        pkl.dump(results, f)
-
-    shutil.copy(args.configs, save_results_dir)
-
-    print("Global min coord:", global_min_coord)
-
-    return global_min_coord
 
 if __name__ == "__main__":
     parser = configargparse.ArgumentParser()
@@ -1330,11 +854,11 @@ if __name__ == "__main__":
         help="path(s) to configuration file(s)",
     )
     parser.add_argument('--mode',
-                        choices=['train', 'eval','test'],
+                        choices=['train', 'eval','plt'],
                         default='train',
                         required=True)
     parser.add_argument('--task',
-                        choices=list(TASKNAME2TASK.keys()) + ["branin"]+ ["my_branin"],
+                        choices=list(TASKNAME2TASK.keys()) + ["branin"],
                         required=True)
     # reproducibility
     parser.add_argument(
@@ -1514,97 +1038,53 @@ if __name__ == "__main__":
         required=False,
         default=20.0,
     )
-    # parser.add_argument(
-    #     "--lambda_my",
-    #     type=float,
-    #     required=False,
-    #     default=1.0,
-    # )
     args = parser.parse_args()
 
     wandb_project = "score-matching " if args.score_matching else "sde-flow"
+    # args.seed = np.random.randint(2**31 - 1) if args.seed is None else args.seed
+    for seed in range(100, 1000,3):   # 循环 1-1000
+        args.seed = seed    
+        set_seed(args.seed + 1)
+        device = configure_gpu(args.use_gpu, args.which_gpu)
 
-    args.seed = np.random.randint(2**31 - 1) if args.seed is None else args.seed
-    set_seed(args.seed + 1)
-    device = configure_gpu(args.use_gpu, args.which_gpu)
+        expt_save_path = f"./experiments/{args.task}/{args.name}/{args.seed}"
 
-    expt_save_path = f"./experiments/{args.task}/{args.name}/{args.seed}"
-    expt_test_path = f"./test"
-    if args.mode == 'train':
-        if not os.path.exists(expt_save_path):
-            os.makedirs(expt_save_path)
-        wandb_logger = pl.loggers.wandb.WandbLogger(
-            project=wandb_project,
-            name=f"{args.name}_{args.seed}",
-            save_dir=expt_save_path)
-        log_args(args, wandb_logger)
-        # # run_training(
-        run_training_forward(
-            taskname=args.task,
-            seed=args.seed,
-            wandb_logger=wandb_logger,
-            args=args,
-            device=device,
-        )
-        # run_training(  # ← 这里改为 run_training
-        # taskname=args.task,
-        # seed=args.seed,
-        # wandb_logger=wandb_logger,
-        # args=args,
-        # device=device,
-        # )
-    elif args.mode == 'eval':
-        checkpoint_path = os.path.join(
-            expt_save_path, "wandb/run-20250915_154809-j00z76es/files/checkpoints/last.ckpt")
-
-        # checkpoint_path = os.path.join(
-        #     expt_save_path, "wandb/latest-run/files/checkpoints/last.ckpt")
-        # checkpoint_path = os.path.join(
-        #     expt_save_path, f"wandb/latest-run/files/checkpoints/val.ckpt")
-        run_evaluate(taskname=args.task,
-                     seed=args.seed,
-                     hidden_size=args.hidden_size,
-                     args=args,
-                     learning_rate=args.learning_rate,
-                     checkpoint_path=checkpoint_path,
-                     device=device,
-                     normalise_x=args.normalise_x,
-                     normalise_y=args.normalise_y)
-    elif args.mode == 'test':
-        lambda_my_xunhuan = 5.0
-        lambda_my_old = 2.0
-        alpha = 0.1
-        min_coord = None
-        iteration = 0
-
-        if not os.path.exists(expt_test_path):
-            os.makedirs(expt_test_path)
-        wandb_logger = pl.loggers.wandb.WandbLogger(
-            project=wandb_project,
-            name=f"{args.name}_{args.seed}",
-            save_dir=expt_test_path)
-        log_args1(args, wandb_logger)
-        # # run_training(
-        while abs(lambda_my_old - lambda_my_xunhuan) > 1e-6 and lambda_my_xunhuan>0.0 and alpha>1e-5:
-            iteration += 1
-            run_training_forward_test(
+        if args.mode == 'train':
+            if not os.path.exists(expt_save_path):
+                os.makedirs(expt_save_path)
+            wandb_logger = pl.loggers.wandb.WandbLogger(
+                project=wandb_project,
+                name=f"{args.name}_{args.seed}",
+                save_dir=expt_save_path)
+            log_args(args, wandb_logger)
+            run_training(
+            # run_training_forward(
                 taskname=args.task,
-                seed=args.seed+iteration * 100,
+                seed=args.seed,
                 wandb_logger=wandb_logger,
                 args=args,
-            device=device,
-            lambda_my_xunhuan=lambda_my_xunhuan
+                device=device,
             )
-            pprint("run_training_forward_test_end")
-            checkpoint_path = os.path.join(
-                expt_test_path, "checkpoints/last.ckpt")
-            pprint(f"checkpoint_path: {checkpoint_path}")
+        elif args.mode == 'eval':
+            # checkpoint_path = os.path.join(
+            #     expt_save_path, "wandb/run-20250928_130539-baudd3a0/files/checkpoints/last.ckpt")
+            # 123
 
             # checkpoint_path = os.path.join(
-            #     expt_save_path, "wandb/latest-run/files/checkpoints/last.ckpt")
+            #     expt_save_path, "wandb/run-20250928_134144-orqm1hup/files/checkpoints/last.ckpt")
+            # # 234
+
+            # checkpoint_path = os.path.join(
+            #     expt_save_path, "wandb/run-20250928_135038-r0y5r08r/files/checkpoints/last.ckpt")
+            # # 345
+            # checkpoint_path = os.path.join(
+            #     expt_save_path, "wandb/run-20250928_141259-uw8hd3a8/files/checkpoints/last.ckpt")
+            # # 456
+            checkpoint_path = os.path.join(expt_save_path, "checkpoints", "last-v4.ckpt")
+            # 567
             # checkpoint_path = os.path.join(
             #     expt_save_path, f"wandb/latest-run/files/checkpoints/val.ckpt")
-            min_coord=run_evaluate_test(taskname=args.task,
+            run_evaluate(taskname=args.task,
                         seed=args.seed,
                         hidden_size=args.hidden_size,
                         args=args,
@@ -1612,19 +1092,34 @@ if __name__ == "__main__":
                         checkpoint_path=checkpoint_path,
                         device=device,
                         normalise_x=args.normalise_x,
-                        normalise_y=args.normalise_y,
-                        lambda_my_xunhuan=lambda_my_xunhuan)
-            lambda_my_old = lambda_my_xunhuan
-            lambda_my_xunhuan = lambda_my_old + alpha * SimpleFunction().output(min_coord.reshape(1,-1))
-            while lambda_my_xunhuan < 0:
-                alpha = alpha / 2
-                lambda_my_xunhuan = lambda_my_old + alpha * SimpleFunction().output(min_coord.reshape(1,-1))
-            pprint(f"lambda_my_new: {lambda_my_xunhuan}")
-            pprint(f"lambda_my_old: {lambda_my_old}")
-            pprint(f"alpha: {alpha}")
-            if abs(SimpleFunction().output(min_coord.reshape(1,-1))) < 1e-6 and SimpleFunction().output(min_coord.reshape(1,-1)) < 0:
-                break
-        pprint("while_end")
-        pprint(f"min_coord: {min_coord}")
+                        normalise_y=args.normalise_y)
+        elif args.mode == 'plt':
+            if not os.path.exists(expt_save_path):
+                os.makedirs(expt_save_path)
+            wandb_logger = pl.loggers.wandb.WandbLogger(
+                project=wandb_project,
+                name=f"{args.name}_{args.seed}",
+                save_dir=expt_save_path)
+            log_args(args, wandb_logger)
+            run_training(
+            # run_training_forward(
+                taskname=args.task,
+                seed=args.seed,
+                wandb_logger=wandb_logger,
+                args=args,
+                device=device,
+            )
+            checkpoint_path = os.path.join(expt_save_path, "checkpoints", "last.ckpt")
+            run_evaluate(taskname=args.task,
+                        seed=args.seed,
+                        hidden_size=args.hidden_size,
+                        args=args,
+                        learning_rate=args.learning_rate,
+                        checkpoint_path=checkpoint_path,
+                        device=device,
+                        normalise_x=args.normalise_x,
+                        normalise_y=args.normalise_y)
+            # plt_mysampler(expt_save_path, args.seed)
+            plt_mysampler("./pics", args.seed)
     else:
         raise NotImplementedError
